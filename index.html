@@ -950,6 +950,9 @@
     if(masterVolume<=0) return;
     try{
       const ctx = ac();
+      // Self-heal: mobile browsers can suspend the context outside of the tracked
+      // visibilitychange path too (e.g. an OS-level interruption). A no-op if already running.
+      if(ctx.state === 'suspended'){ ctx.resume().catch(()=>{}); }
       const t0 = ctx.currentTime + (delay||0);
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
@@ -2072,6 +2075,12 @@
       if(volBeforeTabHide!==null){ masterVolume = volBeforeTabHide; volBeforeTabHide = null; }
       if(!isAnyOverlayOpen()) setGameplayActive(true);
       renderPowerups();
+      // Mobile OSes suspend the AudioContext whenever the tab is backgrounded (screen lock,
+      // app switch, an ad overlay). Volume gets restored above, but without this the context
+      // stays suspended forever and every beep() call after silently no-ops — "sound is on"
+      // in the UI but nothing plays. beep() below also self-heals this for any other path
+      // that suspends it, but this is the common case, so resume eagerly here too.
+      if(actx && actx.state === 'suspended'){ actx.resume().catch(()=>{}); }
     }
   });
   initYandexSDK().then(async ()=>{
