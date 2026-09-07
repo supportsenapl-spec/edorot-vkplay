@@ -1487,8 +1487,24 @@
   // otherwise calls 404 and the game automatically falls back to the DIY version below.
   const YANDEX_LB_NAME = 'edorotBest';
 
+  // Own backend for the VK Play build: VK Play's Leaderboards WebAPI needs a "Steam emulation"
+  // secret that only exists for games with a client distribution — pure browser Free-to-play
+  // projects (like this one) have no such section in the dashboard, so there's no way to call
+  // it. This Worker + KV store stands in as the real, shared leaderboard instead.
+  const VKP_LEADERBOARD_API = 'https://edorot-leaderboard.leaderboard-worker.workers.dev';
+
   async function submitScore(){
     if(!playerId || best<=0) return;
+    if(window.__vkpUid){
+      try{
+        await fetch(VKP_LEADERBOARD_API + '/score', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ uid: window.__vkpUid, name: window.__vkpNick || playerName, score: best })
+        });
+        return;
+      }catch(e){ /* offline, or worker unreachable — fall back below */ }
+    }
     if(window.ysdk && window.ysdk.leaderboards){
       try{
         await window.ysdk.leaderboards.setScore(YANDEX_LB_NAME, best);
@@ -1507,6 +1523,23 @@
   }
   async function loadLeaderboard(){
     rankList.innerHTML = `<div class="rankEmpty">${S('rankLoading')}</div>`;
+
+    if(window.__vkpUid){
+      try{
+        const res = await fetch(VKP_LEADERBOARD_API + '/leaderboard?limit=20');
+        const data = await res.json();
+        if(data && Array.isArray(data.entries)){
+          const entries = data.entries.map(en => ({
+            id: 'vkp:' + en.uid,
+            name: en.name || S('defaultPlayerName'),
+            score: en.score || 0,
+            isMe: en.uid === window.__vkpUid
+          }));
+          renderLeaderboard(entries, true);
+          return;
+        }
+      }catch(e){ /* worker unreachable — fall back below */ }
+    }
 
     if(window.ysdk && window.ysdk.leaderboards){
       try{
@@ -2071,9 +2104,17 @@
         getLoginStatusCallback: function(status){
           // 0 = not authorized, 1 = authorized but not registered in-game, 2/3 = already registered
           if(status === 1){ window.vkpApi.registerUser(); }
+          if(status === 2 || status === 3){ window.vkpApi.userInfo(); window.vkpApi.userProfile(); }
         },
-        userInfoCallback: function(info){},
-        userProfileCallback: function(profile){},
+        // info.uid is VK Play's real per-player numeric id — used as the key for our own
+        // leaderboard backend (see VKP_LEADERBOARD_API below), since VK Play's own Leaderboards
+        // WebAPI isn't reachable for browser-only Free-to-play projects like this one.
+        userInfoCallback: function(info){
+          if(info && info.uid){ window.__vkpUid = String(info.uid); }
+        },
+        userProfileCallback: function(profile){
+          if(profile && profile.nick){ window.__vkpNick = profile.nick; }
+        },
         registerUserCallback: function(info){
           // Some fields (signature/tokens) only arrive reliably after a reload, per VK Play docs.
           window.vkpApi.reloadWindow();
