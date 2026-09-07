@@ -1990,15 +1990,18 @@
       document.documentElement.style.setProperty('--cell', cell+'px');
     }
 
-    // Now scale the whole (possibly already-shrunk-for-small-screens) card uniformly to
-    // fill unused space on larger viewports, capped so it never overflows either dimension.
+    // Now scale the whole (possibly already-shrunk-for-small-screens) card uniformly so it
+    // never overflows either dimension — grows to fill unused space on larger viewports, and
+    // (this is the part that was missing) shrinks when footer/queue chrome below the board
+    // pushes the card taller than the viewport even after measureBottom()'s board-only shrink
+    // pass above, e.g. the short VK Play iframe embed (437x537).
     const rect = contentEl.getBoundingClientRect();
     if(rect.height <= 0 || rect.width <= 0) return;
     const availH = window.innerHeight - MARGIN;
     const availW = window.innerWidth - 16;
     let scale = Math.min(availH / rect.height, availW / rect.width);
     scale = Math.min(scale, 2.4); // sane upper bound — avoid absurd blow-up on huge monitors
-    contentEl.style.transform = scale > 1.02 ? `scale(${scale})` : 'none';
+    contentEl.style.transform = (scale > 1.02 || scale < 0.98) ? `scale(${scale})` : 'none';
   }
   window.addEventListener('resize', fitViewport);
   [200, 500, 900, 1500, 2500, 4000].forEach(ms => setTimeout(fitViewport, ms));
