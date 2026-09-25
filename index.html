@@ -10,7 +10,9 @@
 <script>
   // Yandex Games SDK: initialize immediately after the official SDK script loads.
   // This follows the platform integration order: /sdk.js -> YaGames.init().
-  window.__yaSdkPromise = YaGames.init();
+  // /sdk.js only exists on Yandex's own hosting — everywhere else (VK, VK Play, local testing)
+  // it 404s and YaGames is never defined, so guard the call rather than let it throw.
+  window.__yaSdkPromise = (typeof YaGames !== 'undefined') ? YaGames.init() : Promise.resolve(null);
 </script>
 <!-- VK Bridge — for VK Mini Apps (the "Игры ВКонтакте" catalog on vk.com), a separate
      integration from the Yandex Games SDK above and VK Play's mailru.core.js near </body>.
