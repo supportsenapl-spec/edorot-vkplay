@@ -12,6 +12,17 @@
   // This follows the platform integration order: /sdk.js -> YaGames.init().
   window.__yaSdkPromise = YaGames.init();
 </script>
+<!-- VK Bridge — for VK Mini Apps (the "Игры ВКонтакте" catalog on vk.com), a separate
+     integration from the Yandex Games SDK above and VK Play's mailru.core.js near </body>.
+     Harmless where not loaded inside VK's iframe: the script itself is just a browser SDK,
+     and isVKPlatform() below only turns true when VK's own launch params are present. -->
+<script src="https://unpkg.com/@vkontakte/vk-bridge@2/dist/browser.min.js"></script>
+<script>
+  window.__isVKPlatform = new URLSearchParams(location.search).has('vk_app_id');
+  window.__vkBridgeReady = (window.__isVKPlatform && window.vkBridge)
+    ? window.vkBridge.send('VKWebAppInit', {}).then(()=>true).catch(()=>false)
+    : Promise.resolve(false);
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
 <style>
@@ -1885,25 +1896,74 @@
       return;
     }
 
+    // VK Mini Apps native ad path (Игры ВКонтакте) — VK shows its own native ad player, same as Yandex above.
+    if(window.__isVKPlatform && window.vkBridge){
+      adWatching = true;
+      renderPowerups();
+      const gameplayBeforeAd = gameplayRunning;
+      const volBeforeAd = masterVolume;
+      setGameplayActive(false); masterVolume = 0; tabHidden = true; renderPowerups(); // 4.7: mute + pause gameplay while the ad is up
+      (async ()=>{
+        try{
+          const check = await window.vkBridge.send('VKWebAppCheckNativeAds', { ad_format: 'reward' });
+          if(!check || !check.result) throw new Error('reward ad not available');
+          const shown = await window.vkBridge.send('VKWebAppShowNativeAds', { ad_format: 'reward' });
+          if(shown && shown.result) onComplete();
+        }catch(e){
+          toast(S('adUnavailable'));
+        }finally{
+          adWatching = false; tabHidden = false; masterVolume = volBeforeAd;
+          if(gameplayBeforeAd) setGameplayActive(true);
+          renderPowerups();
+        }
+      })();
+      return;
+    }
+
     // 1.16: no in-house ad imitation. When the real SDK ad isn't available, say so plainly — no reward, no fake video.
     toast(S('adUnavailable'));
   }
 
   // ---- fullscreen interstitial ad: called between runs, see retryBtn handler below ----
   function maybeShowFullscreenAd(){
-    if(!window.ysdk || !window.ysdk.adv || !window.ysdk.adv.showFullscreenAdv) return; // no-op outside the real platform
-    const now = Date.now();
-    if(now - lastFullscreenAdTime < FULLSCREEN_AD_MIN_GAP_MS) return; // 4.4: never more than once per minute
-    let volBeforeAd = masterVolume;
-    let gameplayBeforeAd = false;
-    window.ysdk.adv.showFullscreenAdv({
-      callbacks: {
-        onOpen: ()=>{ gameplayBeforeAd = gameplayRunning; setGameplayActive(false); lastFullscreenAdTime = Date.now(); volBeforeAd = masterVolume; masterVolume = 0; tabHidden = true; renderPowerups(); }, // 4.7: mute + pause while the ad plays
-        onClose: ()=>{ tabHidden = false; masterVolume = volBeforeAd; if(gameplayBeforeAd) setGameplayActive(true); renderPowerups(); },
-        onError: ()=>{ tabHidden = false; masterVolume = volBeforeAd; if(gameplayBeforeAd) setGameplayActive(true); renderPowerups(); },
-        onOffline: ()=>{ tabHidden = false; masterVolume = volBeforeAd; if(gameplayBeforeAd) setGameplayActive(true); renderPowerups(); },
-      }
-    });
+    if(window.ysdk && window.ysdk.adv && window.ysdk.adv.showFullscreenAdv){
+      const now = Date.now();
+      if(now - lastFullscreenAdTime < FULLSCREEN_AD_MIN_GAP_MS) return; // 4.4: never more than once per minute
+      let volBeforeAd = masterVolume;
+      let gameplayBeforeAd = false;
+      window.ysdk.adv.showFullscreenAdv({
+        callbacks: {
+          onOpen: ()=>{ gameplayBeforeAd = gameplayRunning; setGameplayActive(false); lastFullscreenAdTime = Date.now(); volBeforeAd = masterVolume; masterVolume = 0; tabHidden = true; renderPowerups(); }, // 4.7: mute + pause while the ad plays
+          onClose: ()=>{ tabHidden = false; masterVolume = volBeforeAd; if(gameplayBeforeAd) setGameplayActive(true); renderPowerups(); },
+          onError: ()=>{ tabHidden = false; masterVolume = volBeforeAd; if(gameplayBeforeAd) setGameplayActive(true); renderPowerups(); },
+          onOffline: ()=>{ tabHidden = false; masterVolume = volBeforeAd; if(gameplayBeforeAd) setGameplayActive(true); renderPowerups(); },
+        }
+      });
+      return;
+    }
+
+    // VK Mini Apps interstitial path.
+    if(window.__isVKPlatform && window.vkBridge){
+      const now = Date.now();
+      if(now - lastFullscreenAdTime < FULLSCREEN_AD_MIN_GAP_MS) return; // 4.4: never more than once per minute
+      const gameplayBeforeAd = gameplayRunning;
+      const volBeforeAd = masterVolume;
+      lastFullscreenAdTime = Date.now();
+      setGameplayActive(false); masterVolume = 0; tabHidden = true; renderPowerups(); // 4.7: mute + pause while the ad plays
+      (async ()=>{
+        try{
+          const check = await window.vkBridge.send('VKWebAppCheckNativeAds', { ad_format: 'interstitial' });
+          if(check && check.result) await window.vkBridge.send('VKWebAppShowNativeAds', { ad_format: 'interstitial' });
+        }catch(e){ /* no interstitial available right now — silently skip, same as onOffline above */ }
+        finally{
+          tabHidden = false; masterVolume = volBeforeAd;
+          if(gameplayBeforeAd) setGameplayActive(true);
+          renderPowerups();
+        }
+      })();
+      return;
+    }
+    // no-op outside any known platform
   }
 
   // ---- confetti celebration ----
